@@ -2,7 +2,7 @@ import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 
 export type DeviceType = '感烟探测器' | '感温探测器' | '手动报警按钮' | '输入模块' | '输出模块' | '排烟风机' | '防火卷帘' | '消防广播' | '电梯'
-export type Device = { id: string; name: string; type: DeviceType; floor: string; zone: string; address: string }
+export type Device = { id: string; name: string; type: DeviceType; floor: string; zone: string; address: string; batchId?: string; trial?: boolean }
 export type Rule = {
   id: string
   triggerId: string
@@ -12,6 +12,10 @@ export type Rule = {
   priority: 1 | 2 | 3
   suppression: string
   enabled: boolean
+  legacyId?: string
+  batchId?: string
+  trial?: boolean
+  needsReconfirm?: boolean
 }
 export type Validation = { id: string; severity: '错误' | '警告'; ruleIds: string[]; title: string; detail: string; suggestion: string }
 
@@ -47,6 +51,8 @@ export const useLinkageStore = defineStore('linkage', () => {
   const revision = ref(restored?.revision ?? 8)
   const locked = ref(restored?.locked ?? false)
   const acceptedChanges = ref<string[]>(restored?.acceptedChanges ?? ['CH-01'])
+  const activeTrialBatchId = ref<string | null>(restored?.activeTrialBatchId ?? null)
+  const trialDirty = ref(restored?.trialDirty ?? false)
   const selectedRuleIds = ref<string[]>([])
 
   const validations = computed<Validation[]>(() => {
@@ -76,14 +82,21 @@ export const useLinkageStore = defineStore('linkage', () => {
     return result
   })
 
-  watch([devices, rules, revision, locked, acceptedChanges], () => {
-    localStorage.setItem('fire-linkage-draft-v1', JSON.stringify({ devices: devices.value, rules: rules.value, revision: revision.value, locked: locked.value, acceptedChanges: acceptedChanges.value }))
+  watch([devices, rules, revision, locked, acceptedChanges, activeTrialBatchId, trialDirty], () => {
+    localStorage.setItem('fire-linkage-draft-v1', JSON.stringify({ devices: devices.value, rules: rules.value, revision: revision.value, locked: locked.value, acceptedChanges: acceptedChanges.value, activeTrialBatchId: activeTrialBatchId.value, trialDirty: trialDirty.value }))
   }, { deep: true })
+
+  function markTrialEdit() {
+    if (activeTrialBatchId.value) trialDirty.value = true
+  }
 
   function updateRule(id: string, patch: Partial<Rule>) {
     if (locked.value) return
     const rule = rules.value.find((item) => item.id === id)
-    if (rule) Object.assign(rule, patch)
+    if (rule) {
+      Object.assign(rule, patch)
+      markTrialEdit()
+    }
   }
 
   function addRule() {
@@ -98,12 +111,15 @@ export const useLinkageStore = defineStore('linkage', () => {
       suppression: '无',
       enabled: true,
     })
-    revision.value += 1
+    // 试运行期间新改动只记入试运行草稿，不递增正式基线版本
+    if (activeTrialBatchId.value) trialDirty.value = true
+    else revision.value += 1
   }
 
   function batchUpdate(patch: Partial<Rule>) {
     if (locked.value) return
     rules.value = rules.value.map((rule) => (selectedRuleIds.value.includes(rule.id) ? { ...rule, ...patch } : rule))
+    markTrialEdit()
   }
 
   function toggleSelected(enabled: boolean) {
@@ -111,6 +127,7 @@ export const useLinkageStore = defineStore('linkage', () => {
   }
 
   function lockBaseline() {
+    if (activeTrialBatchId.value) return
     locked.value = true
     revision.value += 1
   }
@@ -119,5 +136,5 @@ export const useLinkageStore = defineStore('linkage', () => {
     locked.value = false
   }
 
-  return { devices, rules, revision, locked, acceptedChanges, selectedRuleIds, validations, updateRule, addRule, batchUpdate, toggleSelected, lockBaseline, unlock }
+  return { devices, rules, revision, locked, acceptedChanges, activeTrialBatchId, trialDirty, selectedRuleIds, validations, updateRule, addRule, batchUpdate, toggleSelected, lockBaseline, unlock }
 })

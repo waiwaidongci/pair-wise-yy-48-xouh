@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useLinkageStore } from '../stores/linkage'
+import { useMigrationStore } from '../stores/migration'
 
 const store = useLinkageStore()
+const migration = useMigrationStore()
 const query = ref('')
 const showOnlyEnabled = ref(false)
 const batchDelay = ref(0)
@@ -15,7 +17,7 @@ const selectedIds = computed({
 const rows = computed(() => store.rules.filter((rule) => {
   const trigger = store.devices.find((device) => device.id === rule.triggerId)
   const action = store.devices.find((device) => device.id === rule.actionId)
-  return (!showOnlyEnabled.value || rule.enabled) && (!query.value || `${rule.id}${trigger?.name}${action?.name}${rule.interlock}`.includes(query.value))
+  return (!showOnlyEnabled.value || rule.enabled) && (!query.value || `${rule.id}${rule.legacyId ?? ''}${trigger?.name}${action?.name}${rule.interlock}`.includes(query.value))
 }))
 </script>
 
@@ -25,6 +27,11 @@ const rows = computed(() => store.rules.filter((rule) => {
       <div><p class="eyebrow">CAUSE & EFFECT / 因果矩阵</p><h1>触发条件到动作结果</h1><p class="muted">配置延时、互锁、优先级和抑制条件；矩阵校验实时阻断矛盾规则。</p></div>
       <div class="actions"><v-btn variant="outlined" prepend-icon="mdi-check-all" @click="store.validations.length && $router.push('/review')">校验 {{ store.validations.length }} 项</v-btn><v-btn color="primary" prepend-icon="mdi-plus" @click="store.addRule">新增规则</v-btn></div>
     </div>
+
+    <v-alert v-if="migration.activeTrialBatch" type="info" variant="tonal" density="compact" class="mb-3">
+      试运行修订 {{ migration.activeTrialBatch.trialRevision }} 进行中：矩阵改动只写入试运行草稿，不进入正式基线；迁移规则保留旧规则编号可查。
+      <span v-if="store.trialDirty">当前已有未写入正式基线的试运行改动。</span>
+    </v-alert>
 
     <v-alert v-if="store.validations.length" type="warning" variant="tonal" density="compact" class="mb-3">
       发现 {{ store.validations.filter((item) => item.severity === '错误').length }} 个错误和 {{ store.validations.filter((item) => item.severity === '警告').length }} 个警告。跨区冲突、重复动作与互锁矛盾需要审阅确认。
@@ -51,7 +58,7 @@ const rows = computed(() => store.rules.filter((rule) => {
         <tbody>
           <tr v-for="rule in rows" :key="rule.id" :class="{ 'row-error': store.validations.some((item) => item.severity === '错误' && item.ruleIds.includes(rule.id)) }">
             <td><v-checkbox-btn :model-value="selectedIds.includes(rule.id)" @update:model-value="(value) => selectedIds = value ? [...selectedIds, rule.id] : selectedIds.filter((id) => id !== rule.id)" /></td>
-            <td><strong>{{ rule.id }}</strong></td>
+            <td><strong>{{ rule.id }}</strong><v-chip v-if="rule.legacyId" size="x-small" color="secondary" variant="tonal" class="ml-1">旧 {{ rule.legacyId }}</v-chip><v-chip v-if="rule.trial" size="x-small" color="info" variant="tonal" class="ml-1">试运行</v-chip></td>
             <td>{{ store.devices.find((device) => device.id === rule.triggerId)?.name }}</td>
             <td>{{ store.devices.find((device) => device.id === rule.actionId)?.name }}</td>
             <td><v-text-field :model-value="rule.delay" type="number" density="compact" hide-details style="width:80px" @update:model-value="store.updateRule(rule.id, { delay: Number($event) })" /></td>
@@ -59,7 +66,11 @@ const rows = computed(() => store.rules.filter((rule) => {
             <td><v-select :model-value="rule.priority" :items="[1,2,3]" density="compact" hide-details style="width:82px" @update:model-value="store.updateRule(rule.id, { priority: Number($event) as 1|2|3 })" /></td>
             <td>{{ rule.suppression }}</td>
             <td><v-switch :model-value="rule.enabled" color="primary" hide-details density="compact" @update:model-value="store.updateRule(rule.id, { enabled: Boolean($event) })" /></td>
-            <td><v-chip v-if="store.validations.some((item) => item.ruleIds.includes(rule.id))" size="x-small" color="error" variant="tonal">需处理</v-chip><span v-else class="muted">—</span></td>
+            <td>
+              <v-chip v-if="rule.needsReconfirm" size="x-small" color="warning" variant="tonal">需重新确认</v-chip>
+              <v-chip v-else-if="store.validations.some((item) => item.ruleIds.includes(rule.id))" size="x-small" color="error" variant="tonal">需处理</v-chip>
+              <span v-else class="muted">—</span>
+            </td>
           </tr>
         </tbody>
       </v-data-table>

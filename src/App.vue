@@ -11,6 +11,7 @@ const title = computed(() => String(route.meta.title ?? '消防联动'))
 const items = [
   { to: '/', title: '项目总览', icon: 'mdi-view-dashboard-outline' },
   { to: '/devices', title: '设备与分区', icon: 'mdi-access-point' },
+  { to: '/migration', title: '旧数据迁移', icon: 'mdi-database-import-outline' },
   { to: '/matrix', title: '因果矩阵', icon: 'mdi-grid-large' },
   { to: '/dependency', title: '依赖图', icon: 'mdi-graph-outline' },
   { to: '/review', title: '版本审阅', icon: 'mdi-file-compare' },

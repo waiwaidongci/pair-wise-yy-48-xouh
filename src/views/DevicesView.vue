@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useLinkageStore, type Device, type DeviceType } from '../stores/linkage'
+import { useMigrationStore } from '../stores/migration'
 
 const store = useLinkageStore()
+const migration = useMigrationStore()
 const query = ref('')
 const floor = ref('全部')
 const dialog = ref(false)
@@ -14,6 +16,7 @@ const filtered = computed(() => store.devices.filter((item) => (floor.value === 
 function addDevice() {
   if (!form.value.id || !form.value.name || !form.value.address) return
   store.devices.push({ ...form.value })
+  if (store.activeTrialBatchId) store.trialDirty = true
   dialog.value = false
   form.value = { id: '', name: '', type: '感烟探测器', floor: '1F', zone: 'A 区', address: '' }
 }
@@ -23,8 +26,15 @@ function addDevice() {
   <section class="page">
     <div class="page-head">
       <div><p class="eyebrow">DEVICE REGISTER / 设备台账</p><h1>探测器、模块与消防设备</h1><p class="muted">先维护点位和楼层分区，再建立因果矩阵，避免无效地址引用。</p></div>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="dialog = true">新增点位</v-btn>
+      <div class="actions">
+        <v-btn variant="outlined" prepend-icon="mdi-database-import-outline" @click="$router.push('/migration')">旧数据迁移</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-plus" @click="dialog = true">新增点位</v-btn>
+      </div>
     </div>
+
+    <v-alert v-if="migration.activeTrialBatch" type="info" variant="tonal" density="compact" class="mb-3">
+      迁移批次 {{ migration.activeTrialBatch.id }} 试运行中（{{ migration.activeTrialBatch.trialRevision }}）：台账改动只写入试运行草稿，不进入正式基线。
+    </v-alert>
 
     <div class="toolbar panel">
       <v-text-field v-model="query" label="搜索编号、名称或地址" prepend-inner-icon="mdi-magnify" density="compact" hide-details style="max-width:330px" />
@@ -39,12 +49,16 @@ function addDevice() {
         <tbody>
           <tr v-for="device in filtered" :key="device.id">
             <td class="mono">{{ device.id }}</td>
-            <td><strong>{{ device.name }}</strong></td>
+            <td><strong>{{ device.name }}</strong><v-chip v-if="device.batchId" size="x-small" color="secondary" variant="tonal" class="ml-1">{{ device.batchId }}</v-chip></td>
             <td><v-chip size="small" variant="outlined">{{ device.type }}</v-chip></td>
             <td>{{ device.floor }} / {{ device.zone }}</td>
             <td class="mono">{{ device.address }}</td>
             <td>{{ store.rules.filter((rule) => rule.triggerId === device.id || rule.actionId === device.id).length }} 条</td>
-            <td><v-chip size="small" color="success" variant="tonal">在线</v-chip></td>
+            <td>
+              <v-chip v-if="migration.flaggedDevices.has(device.id)" size="small" color="error" variant="tonal">{{ migration.flaggedDevices.get(device.id)?.join('、') }}</v-chip>
+              <v-chip v-else-if="device.trial" size="small" color="info" variant="tonal">试运行</v-chip>
+              <v-chip v-else size="small" color="success" variant="tonal">在线</v-chip>
+            </td>
           </tr>
         </tbody>
       </v-table>
@@ -70,6 +84,7 @@ function addDevice() {
 </template>
 
 <style scoped>
+.actions { display: flex; gap: 8px; }
 .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 12px; }
 .mono { color: #267078; font-family: ui-monospace,monospace; font-weight: 700; }
 td strong { font-size: 13px; }
