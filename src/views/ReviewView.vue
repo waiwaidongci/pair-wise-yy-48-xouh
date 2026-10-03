@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useLinkageStore } from '../stores/linkage'
+import { useMigrationStore } from '../stores/migration'
+import MigrationPanel from '../components/MigrationPanel.vue'
 
 const store = useLinkageStore()
+const migration = useMigrationStore()
 const checklist = ref([
   { done: true, title: '设备地址与竣工图一致', owner: '消防电专业' },
   { done: true, title: '所有报警点完成单点调试', owner: '调试组' },
@@ -10,11 +13,11 @@ const checklist = ref([
   { done: false, title: '互锁反馈时长完成测试', owner: '暖通专业' },
   { done: false, title: '签字交付包完成哈希校验', owner: '项目负责人' },
 ])
-const changes = [
-  { id: 'CH-01', title: 'PF-2 增加防火阀开启反馈互锁', source: '暖通专业', oldValue: '互锁：无', newValue: '互锁：防火阀开启反馈', risk: '低' },
-  { id: 'CH-02', title: '电梯归位延时由 0 秒调整至 10 秒', source: '电梯专业', oldValue: '延时：0s', newValue: '延时：10s', risk: '中' },
-  { id: 'CH-03', title: '机房感烟联动 1F 排烟风机', source: '智能化专业', oldValue: '无关系', newValue: 'R-007 / 当前停用', risk: '高' },
-]
+const changes = computed(() => store.reviewItems)
+const returnedIds = computed(() => {
+  const batch = migration.batches.find((b) => b.status === 'switched')
+  return new Set(batch?.returnedReviewItemIds ?? [])
+})
 const canLock = computed(() => store.validations.filter((item) => item.severity === '错误').length === 0 && checklist.value.every((item) => item.done))
 
 function accept(id: string) {
@@ -36,9 +39,12 @@ function exportPackage() {
   <section class="page">
     <div class="page-head">
       <div><p class="eyebrow">REVIEW & SIGN-OFF / 审阅签字</p><h1>版本差异、联调清单与锁定</h1><p class="muted">多个专业提交后只接受经过审阅的变更，锁定后配置成为只读基线。</p></div>
-      <div class="actions"><v-btn variant="outlined" prepend-icon="mdi-download" @click="exportPackage">导出交付包</v-btn><v-btn v-if="!store.locked" color="primary" prepend-icon="mdi-lock-outline" :disabled="!canLock" @click="store.lockBaseline">签字锁定</v-btn><v-btn v-else color="warning" variant="outlined" @click="store.unlock">解锁修订</v-btn></div>
+      <div class="actions"><v-btn variant="outlined" prepend-icon="mdi-download" @click="exportPackage">导出交付包</v-btn><v-btn v-if="!store.locked" color="primary" prepend-icon="mdi-lock-outline" :disabled="!canLock || store.isTrial" @click="store.lockBaseline">签字锁定</v-btn><v-btn v-else color="warning" variant="outlined" @click="store.unlock">解锁修订</v-btn></div>
     </div>
 
+    <MigrationPanel scope="review" />
+
+    <v-alert v-if="store.isTrial" type="info" variant="tonal" class="mb-3">当前为旧机迁移试运行修订，新改动不写正式基线；切换为正式基线后才可签字锁定。</v-alert>
     <v-alert v-if="!canLock && !store.locked" type="warning" variant="tonal" class="mb-3">签字前需清除所有错误规则并完成联调清单。</v-alert>
     <v-alert v-if="store.locked" type="success" variant="tonal" class="mb-3">当前版本 R{{ store.revision }} 已签字锁定，任何修改都会生成新的修订草稿。</v-alert>
 
@@ -66,17 +72,25 @@ function exportPackage() {
     </div>
 
     <section class="panel change-panel">
-      <div class="panel-head"><h3>专业提交版本差异</h3><span class="muted">可逐项接受</span></div>
+      <div class="panel-head"><h3>专业提交版本差异</h3><span class="muted">可逐项接受；点位失效的审阅项随迁移批次退回</span></div>
       <v-table>
-        <thead><tr><th>变更</th><th>来源</th><th>原始值</th><th>提交值</th><th>风险</th><th>决定</th></tr></thead>
+        <thead><tr><th>变更</th><th>来源</th><th>原始值</th><th>提交值</th><th>风险</th><th>状态</th><th>决定</th></tr></thead>
         <tbody>
-          <tr v-for="change in changes" :key="change.id">
+          <tr v-for="change in changes" :key="change.id" :class="{ 'row-returned': returnedIds.has(change.id) }">
             <td><strong>{{ change.id }}</strong><br />{{ change.title }}</td>
             <td>{{ change.source }}</td>
             <td class="old">{{ change.oldValue }}</td>
             <td class="new">{{ change.newValue }}</td>
             <td><v-chip size="small" :color="change.risk === '高' ? 'error' : change.risk === '中' ? 'warning' : 'success'" variant="tonal">{{ change.risk }}</v-chip></td>
-            <td><v-btn v-if="!store.acceptedChanges.includes(change.id)" size="small" color="primary" variant="tonal" @click="accept(change.id)">接受变更</v-btn><v-chip v-else color="success" variant="tonal" prepend-icon="mdi-check">已接受</v-chip></td>
+            <td>
+              <v-chip v-if="returnedIds.has(change.id)" size="small" color="error" variant="tonal" prepend-icon="mdi-undo-variant">已退回</v-chip>
+              <span v-else class="muted">正常</span>
+            </td>
+            <td>
+              <v-btn v-if="returnedIds.has(change.id)" size="small" color="error" variant="outlined" disabled>点位失效退回</v-btn>
+              <v-btn v-else-if="!store.acceptedChanges.includes(change.id)" size="small" color="primary" variant="tonal" @click="accept(change.id)">接受变更</v-btn>
+              <v-chip v-else color="success" variant="tonal" prepend-icon="mdi-check">已接受</v-chip>
+            </td>
           </tr>
         </tbody>
       </v-table>
@@ -101,5 +115,7 @@ function exportPackage() {
 .change-panel :deep(table) { min-width: 850px; }
 .old { color: #a54b35; }
 .new { color: #2e755e; font-weight: 700; }
+.row-returned { background: #fdf0ee; }
+.row-returned .new { color: #b53c2a; text-decoration: line-through; }
 @media (max-width: 1000px) { .review-grid { grid-template-columns: 1fr; } }
 </style>

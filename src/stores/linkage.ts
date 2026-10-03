@@ -14,6 +14,8 @@ export type Rule = {
   enabled: boolean
 }
 export type Validation = { id: string; severity: '错误' | '警告'; ruleIds: string[]; title: string; detail: string; suggestion: string }
+export type ReviewItem = { id: string; title: string; source: string; oldValue: string; newValue: string; risk: '低' | '中' | '高'; relatedDeviceId?: string }
+export type BaselineSnapshot = { devices: Device[]; rules: Rule[]; revision: number; locked: boolean; acceptedChanges: string[] }
 
 export const seedDevices: Device[] = [
   { id: 'D-01-01', name: '一层大厅感烟 01', type: '感烟探测器', floor: '1F', zone: 'A 区', address: '1-A-01-01' },
@@ -39,6 +41,12 @@ export const seedRules: Rule[] = [
   { id: 'R-008', triggerId: 'D-01-01', actionId: 'A-02-02', delay: 0, interlock: '无', priority: 1, suppression: '无', enabled: true },
 ]
 
+export const seedReviewItems: ReviewItem[] = [
+  { id: 'CH-01', title: 'PF-2 增加防火阀开启反馈互锁', source: '暖通专业', oldValue: '互锁：无', newValue: '互锁：防火阀开启反馈', risk: '低', relatedDeviceId: 'A-02-01' },
+  { id: 'CH-02', title: '电梯归位延时由 0 秒调整至 10 秒', source: '电梯专业', oldValue: '延时：0s', newValue: '延时：10s', risk: '中', relatedDeviceId: 'A-02-02' },
+  { id: 'CH-03', title: '机房感烟联动 1F 排烟风机', source: '智能化专业', oldValue: '无关系', newValue: 'R-007 / 当前停用', risk: '高', relatedDeviceId: 'D-02-02' },
+]
+
 export const useLinkageStore = defineStore('linkage', () => {
   const saved = localStorage.getItem('fire-linkage-draft-v1')
   const restored = saved ? JSON.parse(saved) : null
@@ -47,7 +55,11 @@ export const useLinkageStore = defineStore('linkage', () => {
   const revision = ref(restored?.revision ?? 8)
   const locked = ref(restored?.locked ?? false)
   const acceptedChanges = ref<string[]>(restored?.acceptedChanges ?? ['CH-01'])
+  const reviewItems = ref<ReviewItem[]>(restored?.reviewItems ?? structuredClone(seedReviewItems))
+  const returnedReviewItemIds = ref<string[]>(restored?.returnedReviewItemIds ?? [])
   const selectedRuleIds = ref<string[]>([])
+  // 试运行标志：迁移批次确认后进入试运行沙箱，期间改动不写正式基线
+  const isTrial = ref(false)
 
   const validations = computed<Validation[]>(() => {
     const result: Validation[] = []
@@ -76,18 +88,49 @@ export const useLinkageStore = defineStore('linkage', () => {
     return result
   })
 
-  watch([devices, rules, revision, locked, acceptedChanges], () => {
-    localStorage.setItem('fire-linkage-draft-v1', JSON.stringify({ devices: devices.value, rules: rules.value, revision: revision.value, locked: locked.value, acceptedChanges: acceptedChanges.value }))
+  watch([devices, rules, revision, locked, acceptedChanges, reviewItems, returnedReviewItemIds], () => {
+    localStorage.setItem('fire-linkage-draft-v1', JSON.stringify({
+      devices: devices.value,
+      rules: rules.value,
+      revision: revision.value,
+      locked: locked.value,
+      acceptedChanges: acceptedChanges.value,
+      reviewItems: reviewItems.value,
+      returnedReviewItemIds: returnedReviewItemIds.value,
+    }))
   }, { deep: true })
 
+  function snapshotBaseline(): BaselineSnapshot {
+    return {
+      devices: JSON.parse(JSON.stringify(devices.value)),
+      rules: JSON.parse(JSON.stringify(rules.value)),
+      revision: revision.value,
+      locked: locked.value,
+      acceptedChanges: [...acceptedChanges.value],
+    }
+  }
+
+  function restoreBaseline(snap: BaselineSnapshot) {
+    devices.value = snap.devices
+    rules.value = snap.rules
+    revision.value = snap.revision
+    locked.value = snap.locked
+    acceptedChanges.value = [...snap.acceptedChanges]
+  }
+
+  function addDevice(device: Device) {
+    if (locked.value && !isTrial.value) return
+    devices.value.push({ ...device })
+  }
+
   function updateRule(id: string, patch: Partial<Rule>) {
-    if (locked.value) return
+    if (locked.value && !isTrial.value) return
     const rule = rules.value.find((item) => item.id === id)
     if (rule) Object.assign(rule, patch)
   }
 
   function addRule() {
-    if (locked.value) return
+    if (locked.value && !isTrial.value) return
     rules.value.push({
       id: `R-${String(rules.value.length + 1).padStart(3, '0')}`,
       triggerId: devices.value[0]?.id ?? '',
@@ -102,7 +145,7 @@ export const useLinkageStore = defineStore('linkage', () => {
   }
 
   function batchUpdate(patch: Partial<Rule>) {
-    if (locked.value) return
+    if (locked.value && !isTrial.value) return
     rules.value = rules.value.map((rule) => (selectedRuleIds.value.includes(rule.id) ? { ...rule, ...patch } : rule))
   }
 
@@ -111,6 +154,8 @@ export const useLinkageStore = defineStore('linkage', () => {
   }
 
   function lockBaseline() {
+    // 试运行期间不允许签字锁定，须先切换为正式基线
+    if (isTrial.value) return
     locked.value = true
     revision.value += 1
   }
@@ -119,5 +164,11 @@ export const useLinkageStore = defineStore('linkage', () => {
     locked.value = false
   }
 
-  return { devices, rules, revision, locked, acceptedChanges, selectedRuleIds, validations, updateRule, addRule, batchUpdate, toggleSelected, lockBaseline, unlock }
+  return {
+    devices, rules, revision, locked, acceptedChanges, reviewItems, returnedReviewItemIds, selectedRuleIds, isTrial,
+    validations,
+    snapshotBaseline, restoreBaseline,
+    addDevice, updateRule, addRule, batchUpdate, toggleSelected,
+    lockBaseline, unlock,
+  }
 })

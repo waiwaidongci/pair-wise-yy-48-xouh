@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useLinkageStore } from '../stores/linkage'
+import { useMigrationStore } from '../stores/migration'
+import MigrationPanel from '../components/MigrationPanel.vue'
 
 const store = useLinkageStore()
+const migration = useMigrationStore()
 const query = ref('')
 const showOnlyEnabled = ref(false)
 const batchDelay = ref(0)
@@ -17,6 +20,11 @@ const rows = computed(() => store.rules.filter((rule) => {
   const action = store.devices.find((device) => device.id === rule.actionId)
   return (!showOnlyEnabled.value || rule.enabled) && (!query.value || `${rule.id}${trigger?.name}${action?.name}${rule.interlock}`.includes(query.value))
 }))
+
+function oldNumberOf(ruleId: string): string | null {
+  if (!migration.activeBatch) return null
+  return migration.oldRuleNumber(migration.activeBatch.id, ruleId)
+}
 </script>
 
 <template>
@@ -25,6 +33,8 @@ const rows = computed(() => store.rules.filter((rule) => {
       <div><p class="eyebrow">CAUSE & EFFECT / 因果矩阵</p><h1>触发条件到动作结果</h1><p class="muted">配置延时、互锁、优先级和抑制条件；矩阵校验实时阻断矛盾规则。</p></div>
       <div class="actions"><v-btn variant="outlined" prepend-icon="mdi-check-all" @click="store.validations.length && $router.push('/review')">校验 {{ store.validations.length }} 项</v-btn><v-btn color="primary" prepend-icon="mdi-plus" @click="store.addRule">新增规则</v-btn></div>
     </div>
+
+    <MigrationPanel scope="matrix" />
 
     <v-alert v-if="store.validations.length" type="warning" variant="tonal" density="compact" class="mb-3">
       发现 {{ store.validations.filter((item) => item.severity === '错误').length }} 个错误和 {{ store.validations.filter((item) => item.severity === '警告').length }} 个警告。跨区冲突、重复动作与互锁矛盾需要审阅确认。
@@ -51,7 +61,7 @@ const rows = computed(() => store.rules.filter((rule) => {
         <tbody>
           <tr v-for="rule in rows" :key="rule.id" :class="{ 'row-error': store.validations.some((item) => item.severity === '错误' && item.ruleIds.includes(rule.id)) }">
             <td><v-checkbox-btn :model-value="selectedIds.includes(rule.id)" @update:model-value="(value) => selectedIds = value ? [...selectedIds, rule.id] : selectedIds.filter((id) => id !== rule.id)" /></td>
-            <td><strong>{{ rule.id }}</strong></td>
+            <td><strong>{{ rule.id }}</strong><span v-if="oldNumberOf(rule.id)" class="old-number" :title="`旧机规则编号 ${oldNumberOf(rule.id)}`">旧 {{ oldNumberOf(rule.id) }}</span></td>
             <td>{{ store.devices.find((device) => device.id === rule.triggerId)?.name }}</td>
             <td>{{ store.devices.find((device) => device.id === rule.actionId)?.name }}</td>
             <td><v-text-field :model-value="rule.delay" type="number" density="compact" hide-details style="width:80px" @update:model-value="store.updateRule(rule.id, { delay: Number($event) })" /></td>
@@ -74,5 +84,6 @@ const rows = computed(() => store.rules.filter((rule) => {
 .table-wrap { overflow-x: auto; }
 .table-wrap :deep(table) { min-width: 1280px; }
 .row-error { background: #fff5f0; }
+.old-number { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px; background: #eef2f2; color: #5c7177; font-size: 10px; font-weight: 600; }
 .muted { color: #849096; }
 </style>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useLinkageStore, type Device, type DeviceType } from '../stores/linkage'
+import MigrationPanel from '../components/MigrationPanel.vue'
 
 const store = useLinkageStore()
 const query = ref('')
@@ -13,7 +14,7 @@ const filtered = computed(() => store.devices.filter((item) => (floor.value === 
 
 function addDevice() {
   if (!form.value.id || !form.value.name || !form.value.address) return
-  store.devices.push({ ...form.value })
+  store.addDevice({ ...form.value })
   dialog.value = false
   form.value = { id: '', name: '', type: '感烟探测器', floor: '1F', zone: 'A 区', address: '' }
 }
@@ -25,6 +26,8 @@ function addDevice() {
       <div><p class="eyebrow">DEVICE REGISTER / 设备台账</p><h1>探测器、模块与消防设备</h1><p class="muted">先维护点位和楼层分区，再建立因果矩阵，避免无效地址引用。</p></div>
       <v-btn color="primary" prepend-icon="mdi-plus" @click="dialog = true">新增点位</v-btn>
     </div>
+
+    <MigrationPanel scope="devices" />
 
     <div class="toolbar panel">
       <v-text-field v-model="query" label="搜索编号、名称或地址" prepend-inner-icon="mdi-magnify" density="compact" hide-details style="max-width:330px" />
